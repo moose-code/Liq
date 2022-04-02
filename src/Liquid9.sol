@@ -23,7 +23,6 @@ contract Liquid {
     // STATE
     ///////////////////////
 
-    address liquid11;
     uint256 liqIndex;
 
     mapping(uint256 => LiqConfig) public liqConfig;
@@ -69,7 +68,7 @@ contract Liquid {
     // MODIFIERS
     ///////////////////////
 
-    modifier auctionOpen(uint256 _liqIndex) {
+    modifier liqOpen(uint256 _liqIndex) {
         require(
             block.timestamp > liqConfig[_liqIndex].liqStartTimestamp &&
                 block.timestamp <
@@ -80,9 +79,31 @@ contract Liquid {
         _;
     }
 
-    constructor() {
-        liquid11 = msg.sender;
+    modifier checkLiqValid(
+        uint256 _totalTokenAmount,
+        uint256 _liqSubscriptionSize,
+        uint256 _liqStartTimestamp
+    ) {
+        require(
+            _totalTokenAmount >= 2 * _liqSubscriptionSize,
+            "Insuffcient size"
+        );
+        require(
+            block.timestamp + 1 hours < _liqStartTimestamp,
+            "Bad start time"
+        );
+        require(
+            block.timestamp + 30 days > _liqStartTimestamp,
+            "Bad start time"
+        );
+        _;
     }
+
+    ///////////////////////
+    // LIQ CONSTRUCTOR
+    ///////////////////////
+
+    constructor() {}
 
     ///////////////////////
     // LIQ CREATORS
@@ -98,14 +119,15 @@ contract Liquid {
         address _paymentToken,
         address _routerAddress,
         address _factoryAddress
-    ) external {
+    )
+        external
+        checkLiqValid(
+            _totalTokenAmount,
+            _liqSubscriptionSize,
+            _liqStartTimestamp
+        )
+    {
         liqIndex++;
-
-        // This include also bonus incentive tokens.
-        require(
-            _totalTokenAmount >= 2 * _liqSubscriptionSize,
-            "insufcient auction funds"
-        );
 
         liqConfig[liqIndex].pairAddress = IUniswapV2Factory(_factoryAddress)
             .getPair(_protocolToken, _paymentToken);
@@ -116,7 +138,7 @@ contract Liquid {
             "pair must exist"
         );
 
-        // give us the juice
+        // Protocol should have already approved us to take these tokens
         IERC20(_protocolToken).transfer(address(this), _totalTokenAmount);
 
         // set what we need for the auctionzs
@@ -128,14 +150,11 @@ contract Liquid {
         liqConfig[liqIndex].routerAddress = _routerAddress;
         liqConfig[liqIndex].liqCreatorAddress = msg.sender;
 
-        // auction start ser
-        require(
-            block.timestamp + 1 hours < _liqStartTimestamp,
-            "auction already started"
-        );
         // also check reasonable start time paratmeter.
         liqConfig[liqIndex].liqStartTimestamp = _liqStartTimestamp;
     }
+
+    // If the config is incorrect there should be some ability to back out
 
     ///////////////////////
     // LIQ APEOOORS
@@ -146,7 +165,7 @@ contract Liquid {
         uint256 _liqIndex,
         uint256 _amountToApe,
         bool _diamondHand
-    ) external auctionOpen(_liqIndex) {
+    ) external liqOpen(_liqIndex) {
         require(_amountToApe > 0, "ape harder");
 
         // enforce not too much ape edge case after hack.
@@ -163,7 +182,7 @@ contract Liquid {
     // ape out of the sepcific liquidity event
     function unApe(uint256 _liqIndex, uint256 _amountToApeOut)
         external
-        auctionOpen(_liqIndex)
+        liqOpen(_liqIndex)
     {
         require(
             _amountToApeOut <= userContributions[msg.sender][_liqIndex].amount,
@@ -191,157 +210,157 @@ contract Liquid {
     // LIQ FINALIzATION
     ///////////////////////
 
-    function finalizeAuction(uint256 _liqIndex) external {
-        require(
-            block.timestamp >
-                liqConfig[_liqIndex].liqStartTimestamp +
-                    liqConfig[_liqIndex].liqLength,
-            "Auction not ended"
-        );
-        // require(
-        //     !liqConfig[_liqIndex].auctionFinalized,
-        //     "auction already finalized"
-        // );
+    // function finalizeAuction(uint256 _liqIndex) external {
+    //     require(
+    //         block.timestamp >
+    //             liqConfig[_liqIndex].liqStartTimestamp +
+    //                 liqConfig[_liqIndex].liqLength,
+    //         "Auction not ended"
+    //     );
+    //     // require(
+    //     //     !liqConfig[_liqIndex].auctionFinalized,
+    //     //     "auction already finalized"
+    //     // );
 
-        // liqConfig[_liqIndex].auctionFinalized = true;
+    //     // liqConfig[_liqIndex].auctionFinalized = true;
 
-        if (
-            liqInfo[_liqIndex].totalPaymentTokenRecieved <
-            liqConfig[_liqIndex].liqMinSubscriptionPrice
-        ) {
-            // liqConfig[_liqIndex].auctionDidNotPass = true;
-            return; // auction didn't pass people should withdraw.
-        }
+    //     if (
+    //         liqInfo[_liqIndex].totalPaymentTokenRecieved <
+    //         liqConfig[_liqIndex].liqMinSubscriptionPrice
+    //     ) {
+    //         // liqConfig[_liqIndex].auctionDidNotPass = true;
+    //         return; // auction didn't pass people should withdraw.
+    //     }
 
-        // Need to ensure permissonless addition of this liquidity cannot be exploited
-        _addTheLiquidity(_liqIndex);
+    //     // Need to ensure permissonless addition of this liquidity cannot be exploited
+    //     _addTheLiquidity(_liqIndex);
 
-        // perform other work!
-    }
+    //     // perform other work!
+    // }
 
-    function _addTheLiquidity(uint256 _liqIndex) internal {
-        address liqPairAddress = liqConfig[_liqIndex].pairAddress;
+    // function _addTheLiquidity(uint256 _liqIndex) internal {
+    //     address liqPairAddress = liqConfig[_liqIndex].pairAddress;
 
-        // uint256 balanceBefore = IUniswapV2Pair(liqPairAddress).balanceOf(
-        //     address(this)
-        // );
+    //     // uint256 balanceBefore = IUniswapV2Pair(liqPairAddress).balanceOf(
+    //     //     address(this)
+    //     // );
 
-        // It is not safe to look up the reserve ratio from within a transaction and rely on it as a price belief,
-        // as this ratio can be cheaply manipulated to your detriment.
-        // don't want to get rugged here. We need slippage tolerance and or a price estimate.zs
-        // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
-        // think of solution such as simply encoding the price belief in the input and making this function permissioned.
+    //     // It is not safe to look up the reserve ratio from within a transaction and rely on it as a price belief,
+    //     // as this ratio can be cheaply manipulated to your detriment.
+    //     // don't want to get rugged here. We need slippage tolerance and or a price estimate.zs
+    //     // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
+    //     // think of solution such as simply encoding the price belief in the input and making this function permissioned.
 
-        // address token0 = IUniswapV2Pair(auction.pairAddress).token0();
-        (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(liqPairAddress)
-            .getReserves();
+    //     // address token0 = IUniswapV2Pair(auction.pairAddress).token0();
+    //     (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(liqPairAddress)
+    //         .getReserves();
 
-        (
-            uint256 reserveProtocolToken,
-            uint256 reserveOtherToken
-        ) = (IUniswapV2Pair(liqPairAddress).token0() ==
-                liqConfig[_liqIndex].protocolToken)
-                ? (uint256(reserve0), uint256(reserve1))
-                : (uint256(reserve1), uint256(reserve0));
+    //     (
+    //         uint256 reserveProtocolToken,
+    //         uint256 reserveOtherToken
+    //     ) = (IUniswapV2Pair(liqPairAddress).token0() ==
+    //             liqConfig[_liqIndex].protocolToken)
+    //             ? (uint256(reserve0), uint256(reserve1))
+    //             : (uint256(reserve1), uint256(reserve0));
 
-        // calculate exact ratio to put it in at.
-        uint256 amountOfProtocolTokenToPutIn = (reserveOtherToken *
-            liqInfo[_liqIndex].totalPaymentTokenRecieved) /
-            reserveProtocolToken;
+    //     // calculate exact ratio to put it in at.
+    //     uint256 amountOfProtocolTokenToPutIn = (reserveOtherToken *
+    //         liqInfo[_liqIndex].totalPaymentTokenRecieved) /
+    //         reserveProtocolToken;
 
-        //check we weren't sandwidched using chainlink
-        // require(
-        //     (fairPrice * 997) / 1000 <
-        //         (reserveOtherToken * 1e18) / reserveProtocolToken
-        // );
-        // require(
-        //     (fairPrice * 1003) / 1000 >
-        //         (reserveOtherToken * 1e18) / reserveProtocolToken
-        // );
+    //     //check we weren't sandwidched using chainlink
+    //     // require(
+    //     //     (fairPrice * 997) / 1000 <
+    //     //         (reserveOtherToken * 1e18) / reserveProtocolToken
+    //     // );
+    //     // require(
+    //     //     (fairPrice * 1003) / 1000 >
+    //     //         (reserveOtherToken * 1e18) / reserveProtocolToken
+    //     // );
 
-        // give router the necessary allowance
-        // maximal approve rather in contructor
-        // IERC20(liq.protocolToken).approve(
-        //     liq.routerAddress,
-        //     amountOfProtocolTokenToPutIn
-        // );
-        // IERC20(liq.paymentToken).approve(
-        //     liq.routerAddress,
-        //     liqInfo[_liqIndex].totalPaymentTokenRecieved
-        // );
-        IUniswapV2Router02(liqConfig[_liqIndex].routerAddress).addLiquidity(
-            liqConfig[_liqIndex].protocolToken,
-            liqConfig[_liqIndex].paymentToken,
-            amountOfProtocolTokenToPutIn, // amountADesired
-            liqInfo[_liqIndex].totalPaymentTokenRecieved,
-            amountOfProtocolTokenToPutIn, // use another price method to ensure this isn't an issue.
-            liqInfo[_liqIndex].totalPaymentTokenRecieved,
-            address(this),
-            block.timestamp // must execute atomically obvs
-        );
+    //     // give router the necessary allowance
+    //     // maximal approve rather in contructor
+    //     // IERC20(liq.protocolToken).approve(
+    //     //     liq.routerAddress,
+    //     //     amountOfProtocolTokenToPutIn
+    //     // );
+    //     // IERC20(liq.paymentToken).approve(
+    //     //     liq.routerAddress,
+    //     //     liqInfo[_liqIndex].totalPaymentTokenRecieved
+    //     // );
+    //     IUniswapV2Router02(liqConfig[_liqIndex].routerAddress).addLiquidity(
+    //         liqConfig[_liqIndex].protocolToken,
+    //         liqConfig[_liqIndex].paymentToken,
+    //         amountOfProtocolTokenToPutIn, // amountADesired
+    //         liqInfo[_liqIndex].totalPaymentTokenRecieved,
+    //         amountOfProtocolTokenToPutIn, // use another price method to ensure this isn't an issue.
+    //         liqInfo[_liqIndex].totalPaymentTokenRecieved,
+    //         address(this),
+    //         block.timestamp // must execute atomically obvs
+    //     );
 
-        // liqInfo[_liqIndex].totalLPTokensCreated =
-        //     IUniswapV2Pair(liqPairAddress).balanceOf(address(this)) -
-        //     balanceBefore;
-    }
+    //     // liqInfo[_liqIndex].totalLPTokensCreated =
+    //     //     IUniswapV2Pair(liqPairAddress).balanceOf(address(this)) -
+    //     //     balanceBefore;
+    // }
 
     /*╔═════════════════════════════╗
       ║    success redeem events    ║
       ╚═════════════════════════════╝*/
 
-    function userRedeemTokens(uint256 _liqIndex) external {
-        // require(
-        //     liqConfig[_liqIndex].auctionFinalized,
-        //     "auction not finalized"
-        // );
-        //only once auction is over
-        UserContribution storage user = userContributions[msg.sender][
-            _liqIndex
-        ];
+    // function userRedeemTokens(uint256 _liqIndex) external {
+    //     // require(
+    //     //     liqConfig[_liqIndex].auctionFinalized,
+    //     //     "auction not finalized"
+    //     // );
+    //     //only once auction is over
+    //     UserContribution storage user = userContributions[msg.sender][
+    //         _liqIndex
+    //     ];
 
-        uint256 baseAmountForUser = (liqConfig[_liqIndex].liqSubscriptionSize *
-            user.amount) / liqInfo[_liqIndex].totalPaymentTokenRecieved;
+    //     uint256 baseAmountForUser = (liqConfig[_liqIndex].liqSubscriptionSize *
+    //         user.amount) / liqInfo[_liqIndex].totalPaymentTokenRecieved;
 
-        if (user.lastRedeemTimestamp == 0) {
-            user.lastRedeemTimestamp = block.timestamp;
-        }
+    //     if (user.lastRedeemTimestamp == 0) {
+    //         user.lastRedeemTimestamp = block.timestamp;
+    //     }
 
-        // todo allocate bonus liquidity
-        uint256 vestingPeriod = (user.diamondHand) ? 90 days : 180 days;
-        uint256 vestEndTime = liqConfig[_liqIndex].liqStartTimestamp +
-            liqConfig[_liqIndex].liqLength +
-            vestingPeriod;
+    //     // todo allocate bonus liquidity
+    //     uint256 vestingPeriod = (user.diamondHand) ? 90 days : 180 days;
+    //     uint256 vestEndTime = liqConfig[_liqIndex].liqStartTimestamp +
+    //         liqConfig[_liqIndex].liqLength +
+    //         vestingPeriod;
 
-        uint256 vestedTill = (block.timestamp > vestEndTime)
-            ? vestEndTime
-            : block.timestamp;
+    //     uint256 vestedTill = (block.timestamp > vestEndTime)
+    //         ? vestEndTime
+    //         : block.timestamp;
 
-        // safe math will revert if they try redeem again past their vest period
-        uint256 vestedAmount = (baseAmountForUser *
-            (vestedTill - user.lastRedeemTimestamp)) / vestingPeriod;
+    //     // safe math will revert if they try redeem again past their vest period
+    //     uint256 vestedAmount = (baseAmountForUser *
+    //         (vestedTill - user.lastRedeemTimestamp)) / vestingPeriod;
 
-        user.lastRedeemTimestamp = block.timestamp;
+    //     user.lastRedeemTimestamp = block.timestamp;
 
-        IERC20(liqConfig[_liqIndex].protocolToken).transfer(
-            msg.sender,
-            vestedAmount
-        );
-    }
+    //     IERC20(liqConfig[_liqIndex].protocolToken).transfer(
+    //         msg.sender,
+    //         vestedAmount
+    //     );
+    // }
 
-    function protocolRedeemLPtokens(uint256 _liqIndex) external {
-        // require(
-        //     liqConfig[_liqIndex].auctionFinalized,
-        //     "auction not finalized"
-        // );
-        uint256 amount = liqInfo[_liqIndex].totalLPTokensCreated;
+    // function protocolRedeemLPtokens(uint256 _liqIndex) external {
+    //     // require(
+    //     //     liqConfig[_liqIndex].auctionFinalized,
+    //     //     "auction not finalized"
+    //     // );
+    //     uint256 amount = liqInfo[_liqIndex].totalLPTokensCreated;
 
-        liqInfo[_liqIndex].totalLPTokensCreated = 0;
-        IUniswapV2Pair(liqConfig[_liqIndex].pairAddress).transferFrom(
-            address(this),
-            liqConfig[_liqIndex].liqCreatorAddress,
-            amount
-        );
-    }
+    //     liqInfo[_liqIndex].totalLPTokensCreated = 0;
+    //     IUniswapV2Pair(liqConfig[_liqIndex].pairAddress).transferFrom(
+    //         address(this),
+    //         liqConfig[_liqIndex].liqCreatorAddress,
+    //         amount
+    //     );
+    // }
 
     /*╔═════════════════════════════╗
       ║    Failed event withdrawls  ║
